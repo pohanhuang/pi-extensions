@@ -1,0 +1,13 @@
+{
+  "name": "@po.dev/pi-usage-dashboard",
+  "version": "0.1.0",
+  "description": "Local token and cost dashboard for pi sessions",
+  "keywords": ["pi-package", "pi", "usage", "tokens", "dashboard"],
+  "license": "MIT",
+  "files": ["*.ts", "README.md"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": { "extensions": ["./index.ts"] }
+}
