@@ -1126,18 +1126,27 @@ class UsageComponent {
 // Extension Entry Point
 // =============================================================================
 
-function setUsageFooter(ctx: { ui: ExtensionCommandContext["ui"] }, totals: TotalStats): void {
+function footerModelLabel(ctx: Pick<ExtensionCommandContext, "model" | "thinkingLevel">): string {
+	const model = ctx.model;
+	if (!model) return "no-model";
+	const label = `(${model.provider}) ${model.id}`;
+	return model.reasoning && ctx.thinkingLevel ? `${label} • ${ctx.thinkingLevel}` : label;
+}
+
+function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thinkingLevel">, totals: TotalStats): void {
 	ctx.ui.setFooter((_tui, theme) => ({
 		invalidate() {},
 		render(width: number): string[] {
-			const line = theme.fg("thinkingHigh", "Usage:") + " " + theme.fg("accent", formatCost(totals.cost)) + " · " + theme.fg("text", `${formatTokens(totals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(totals.tokens.input + totals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(totals.tokens.output)}`) + " · " + theme.fg("thinkingHigh", `${formatTokens(totals.tokens.cacheRead + totals.tokens.cacheWrite)} cache`) + theme.fg("dim", " · (Today)");
-			return [truncateToWidth(line, width)];
+			const usage = theme.fg("thinkingHigh", "Usage:") + " " + theme.fg("accent", formatCost(totals.cost)) + " · " + theme.fg("text", `${formatTokens(totals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(totals.tokens.input + totals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(totals.tokens.output)}`) + " · " + theme.fg("thinkingHigh", `${formatTokens(totals.tokens.cacheRead + totals.tokens.cacheWrite)} cache`) + theme.fg("dim", " · (Today)");
+			const model = theme.fg("dim", footerModelLabel(ctx));
+			const gap = width - visibleWidth(usage) - visibleWidth(model);
+			return [gap >= 2 ? usage + " ".repeat(gap) + model : truncateToWidth(usage, width)];
 		},
 	}));
 }
 
 export default function (pi: ExtensionAPI) {
-	const refreshFooter = (ctx: { hasUI: boolean; ui: ExtensionCommandContext["ui"] }) => {
+	const refreshFooter = (ctx: Pick<ExtensionCommandContext, "hasUI" | "ui" | "model" | "thinkingLevel">) => {
 		if (!ctx.hasUI) return;
 		void collectUsageData().then((data) => {
 			if (!data) return;
@@ -1155,6 +1164,7 @@ export default function (pi: ExtensionAPI) {
 	};
 	pi.on("session_start", (_event, ctx) => { snapshotPrompt(ctx); refreshFooter(ctx); });
 	pi.on("message_end", (_event, ctx) => { snapshotPrompt(ctx); refreshFooter(ctx); });
+	pi.on("model_select", (_event, ctx) => { refreshFooter(ctx); });
 	pi.registerCommand("usage", {
 		description: "Show usage statistics dashboard",
 		handler: async (_args: string, ctx: ExtensionCommandContext) => {
