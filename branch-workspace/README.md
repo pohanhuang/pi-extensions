@@ -24,7 +24,7 @@ Mode:
 ```
 
 Rules:
-- Missing `.mode` becomes `plan`
+- Missing `.mode` becomes `discuss`
 - Existing valid `.mode` is preserved
-- Invalid `.mode` resets to `plan`
-- `discuss.md` is not loaded unless explicitly read
+- Invalid `.mode` resets to `discuss`
+- `plan` / `discuss` mode blocks `write`, `edit`, and mutating `bash`
