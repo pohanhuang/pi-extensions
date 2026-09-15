@@ -8,9 +8,9 @@ type Mode = (typeof MODES)[number];
 
 const TEMPLATES = {
 	agents: "# Agent Instructions\n\n<!-- Shared behavior and constraints for this repository. -->\n",
-	context: "# Context\n\n<!-- What problem does this branch solve, and why? -->\n",
-	implement: "# Implementation\n\n## Progress\n\nNot started.\n\n## TODO\n\n- Define the implementation after planning.\n",
-	discuss: "# Discussion\n\n<!-- Notes, tradeoffs, and open questions. Not loaded by default. -->\n",
+	plan: "# Plan\n\n<!-- What problem does this branch solve, and what is the plan? -->\n",
+	discuss: "# Discussion\n\n<!-- Notes, tradeoffs, and open questions. -->\n",
+	implementation: "# Implementation\n\n## Progress\n\nNot started.\n\n## TODO\n\n- Define the implementation after planning.\n",
 };
 
 function branch(cwd: string): string {
@@ -26,8 +26,9 @@ function workspace(cwd: string): string {
 	return join(cwd, ".pi", branch(cwd).replace(/[\\/]/g, "-"));
 }
 
-function writeMissing(path: string, content: string): void {
-	if (!existsSync(path)) writeFileSync(path, content, "utf8");
+function writeMissing(path: string, content: string, fallback?: string): void {
+	if (existsSync(path)) return;
+	writeFileSync(path, fallback && existsSync(fallback) ? readFileSync(fallback, "utf8") : content, "utf8");
 }
 
 function normalizeMode(value: string): Mode {
@@ -40,9 +41,9 @@ function ensure(cwd: string): { dir: string; mode: Mode; reset: boolean } {
 	const dir = workspace(cwd);
 	mkdirSync(dir, { recursive: true });
 	writeMissing(join(root, "agents.md"), TEMPLATES.agents);
-	writeMissing(join(dir, "context.md"), TEMPLATES.context);
-	writeMissing(join(dir, "implement.md"), TEMPLATES.implement);
+	writeMissing(join(dir, "plan.md"), TEMPLATES.plan, join(dir, "context.md"));
 	writeMissing(join(dir, "discuss.md"), TEMPLATES.discuss);
+	writeMissing(join(dir, "implementation.md"), TEMPLATES.implementation, join(dir, "implement.md"));
 
 	const modePath = join(dir, ".mode");
 	let reset = false;
@@ -78,11 +79,14 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", (event, ctx) => {
 		const s = ensure(ctx.cwd);
-		const agents = join(ctx.cwd, ".pi", "agents.md");
-		const context = join(s.dir, "context.md");
-		const implement = join(s.dir, "implement.md");
+		const agents = existsSync(join(ctx.cwd, "AGENTS.md")) ? join(ctx.cwd, "AGENTS.md") : join(ctx.cwd, ".pi", "agents.md");
+		const docs = s.mode === "discuss"
+			? ["plan.md", "discuss.md"]
+			: s.mode === "implement"
+				? ["plan.md", "implementation.md"]
+				: ["plan.md"];
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n## Per-Branch Workspace\nBranch: ${branch(ctx.cwd)}\nWorkspace: ${s.dir}\nCurrent mode: ${s.mode}\n\n### .pi/agents.md\n${read(agents)}\n\n### context.md\n${read(context)}\n\n### implement.md\n${read(implement)}\n\nDo not load discuss.md unless it is needed.`,
+			systemPrompt: `${event.systemPrompt}\n\n## Per-Branch Workspace\nBranch: ${branch(ctx.cwd)}\nWorkspace: ${s.dir}\nCurrent mode: ${s.mode}\n\n### ${agents === join(ctx.cwd, "AGENTS.md") ? "AGENTS.md" : ".pi/agents.md"}\n${read(agents)}\n\n${docs.map((doc) => `### ${doc}\n${read(join(s.dir, doc))}`).join("\n\n")}`,
 		};
 	});
 
