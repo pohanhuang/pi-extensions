@@ -1192,12 +1192,18 @@ function footerModelLabel(ctx: Pick<ExtensionCommandContext, "model" | "thinking
 	return model.reasoning && ctx.thinkingLevel ? `${label} • ${ctx.thinkingLevel}` : label;
 }
 
-function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thinkingLevel">, totals: TotalStats): void {
+function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thinkingLevel" | "getContextUsage">, totals: TotalStats): void {
 	ctx.ui.setFooter((_tui, theme) => ({
 		invalidate() {},
 		render(width: number): string[] {
-			const usage = theme.fg("thinkingHigh", "Usage:") + " " + theme.fg("accent", formatCost(totals.cost)) + " · " + theme.fg("text", `${formatTokens(totals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(totals.tokens.input + totals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(totals.tokens.output)}`) + " · " + theme.fg("thinkingHigh", `${formatTokens(totals.tokens.cacheRead + totals.tokens.cacheWrite)} cache`) + theme.fg("dim", " · (Today)");
-			const model = theme.fg("dim", footerModelLabel(ctx));
+			const context = ctx.getContextUsage();
+			const compactAt = context ? context.contextWindow - 16_384 : 0;
+			const left = context?.tokens === null ? "?" : context ? formatTokens(Math.max(0, compactAt - context.tokens)) : "?";
+			const contextStatus = context
+				? " · " + theme.fg("warning", `${context.percent?.toFixed(1) ?? "?"}%`) + theme.fg("dim", "/") + theme.fg("success", `${left} left`) + " " + theme.fg("accent", "(auto)")
+				: "";
+			const usage = theme.fg("thinkingHigh", "Usage:") + " " + theme.fg("accent", "(Today)") + " · " + theme.fg("accent", formatCost(totals.cost)) + " · " + theme.fg("text", `${formatTokens(totals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(totals.tokens.input + totals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(totals.tokens.output)}`) + " · " + theme.fg("thinkingHigh", `${formatTokens(totals.tokens.cacheRead + totals.tokens.cacheWrite)} cache`) + contextStatus;
+			const model = theme.fg("accent", footerModelLabel(ctx));
 			const gap = width - visibleWidth(usage) - visibleWidth(model);
 			return [gap >= 2 ? usage + " ".repeat(gap) + model : truncateToWidth(usage, width)];
 		},
@@ -1205,7 +1211,7 @@ function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thi
 }
 
 export default function (pi: ExtensionAPI) {
-	const refreshFooter = (ctx: Pick<ExtensionCommandContext, "hasUI" | "ui" | "model" | "thinkingLevel">) => {
+	const refreshFooter = (ctx: Pick<ExtensionCommandContext, "hasUI" | "ui" | "model" | "thinkingLevel" | "getContextUsage">) => {
 		if (!ctx.hasUI) return;
 		void collectUsageData().then((data) => {
 			if (!data) return;
