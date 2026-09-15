@@ -848,7 +848,7 @@ class UsageComponent {
 			for (let j = 0; j < rows.length; j++) {
 				const m = rows[j]!;
 				const branch = j === rows.length - 1 ? "└" : "├";
-				lines.push(`${treeIndent}  ${branch} ${padRight(truncateToWidth(m.name, providerWidth), providerWidth)} ${padLeft(formatAxisCost(m.cost), costWidth)}  ${padLeft(formatTokens(m.tokens), tokenWidth)}`);
+				lines.push(th.fg("muted", `${treeIndent}  ${branch} ${padRight(truncateToWidth(m.name, providerWidth), providerWidth)} ${padLeft(formatAxisCost(m.cost), costWidth)}  ${padLeft(formatTokens(m.tokens), tokenWidth)}`));
 			}
 		}
 		lines.push("");
