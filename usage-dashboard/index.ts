@@ -12,6 +12,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import { CancellableLoader, Container, Spacer, matchesKey, visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 
 import { AUXILIARY_PROVIDER, collectUsageData, getAgentDir, splitHourlyKey, TAB_ORDER } from "./data";
 import type { CollectProgress } from "./data";
@@ -378,6 +379,7 @@ class UsageComponent {
 	private tableFilterEditing = false;
 	private graphHidden = new Set<string>();
 	private graphLegendIndex = 0;
+	private graphDetailProvider: string | null = null;
 	private promptSections: PromptSection[];
 	private insightIndex = 0;
 	private insightDetail: PromptSection | null = null;
@@ -599,7 +601,10 @@ class UsageComponent {
 		} else if (matchesKey(data, "down")) {
 			const count = this.buildDailyProviderModel().providers.length;
 			this.graphLegendIndex = Math.min(Math.max(count - 1, 0), this.graphLegendIndex + 1);
-		} else if (matchesKey(data, "enter") || matchesKey(data, "space")) {
+		} else if (matchesKey(data, "enter")) {
+			const target = this.buildDailyProviderModel().providers[this.graphLegendIndex];
+			if (target) this.graphDetailProvider = this.graphDetailProvider === target.name ? null : target.name;
+		} else if (matchesKey(data, "space")) {
 			const target = this.buildDailyProviderModel().providers[this.graphLegendIndex];
 			if (target) {
 				if (this.graphHidden.has(target.name)) this.graphHidden.delete(target.name);
@@ -656,7 +661,7 @@ class UsageComponent {
 		let content: string;
 		const stats = this.data[this.activeTab];
 		if (this.viewMode === "graph") {
-			const slice = `${this.graphCumulative ? "cumulative" : "per-bucket"}-${this.graphMetric}-by-${this.graphGroupBy}`;
+			const slice = `${this.viewMode}-${this.graphCumulative ? "cumulative" : "per-bucket"}-${this.graphMetric}-by-${this.graphGroupBy}`;
 			name = exportFileName("graph", this.activeTab, slice, "csv", now);
 			content = buildGraphCsv(this.buildGraphModelForView());
 		} else if (this.viewMode === "insights") {
@@ -750,45 +755,68 @@ class UsageComponent {
 		return [truncateToWidth(summary, width), truncateToWidth(stats, width), ""];
 	}
 
-	private buildDailyProviderModel(): { days: { label: string; total: number; providers: Map<string, number> }[]; providers: { name: string; total: number }[]; max: number; total: number } {
+	private buildDailyProviderModel(): { days: { label: string; total: number; providers: Map<string, number> }[]; providers: { name: string; total: number; models: { name: string; cost: number; tokens: number; value: number }[] }[]; max: number; total: number } {
 		const now = this.data.bounds.nowMs;
 		const start = this.activeTab === "today" ? this.data.bounds.todayMs : this.activeTab === "thisWeek" ? this.data.bounds.weekStartMs : this.activeTab === "lastWeek" ? this.data.bounds.lastWeekStartMs : this.activeTab === "last30Days" ? this.data.bounds.last30DaysStartMs : Math.min(...this.data.hourly.keys(), this.data.bounds.todayMs);
 		const end = this.activeTab === "lastWeek" ? this.data.bounds.weekStartMs : now;
 		const dayMs = 24 * 3_600_000;
+		const valueOf = (cell: { cost: number; input: number; output: number; cacheRead: number; cacheWrite: number }) => cell.cost;
 		const days: { label: string; total: number; providers: Map<string, number> }[] = [];
-		for (let t = start; t < end; t += dayMs) days.push({ label: new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" }), total: 0, providers: new Map() });
+		for (let t = start; t < end; t += dayMs) {
+			const date = new Date(t);
+			days.push({ label: `${date.getMonth() + 1}/${date.getDate()}`, total: 0, providers: new Map() });
+		}
 		const providerTotals = new Map<string, number>();
+		const modelTotals = new Map<string, Map<string, { cost: number; tokens: number; value: number }>>();
 		for (const [hour, cells] of this.data.hourly) {
 			if (hour < start || hour >= end) continue;
 			const day = days[Math.min(days.length - 1, Math.floor((hour - start) / dayMs))];
 			if (!day) continue;
 			for (const [key, cell] of cells) {
-				const provider = splitHourlyKey(key).provider;
+				const { provider, model } = splitHourlyKey(key);
 				if (provider === AUXILIARY_PROVIDER) continue;
-				day.providers.set(provider, (day.providers.get(provider) ?? 0) + cell.cost);
-				day.total += cell.cost;
-				providerTotals.set(provider, (providerTotals.get(provider) ?? 0) + cell.cost);
+				const tokens = cell.input + cell.output + cell.cacheRead + cell.cacheWrite;
+				const value = valueOf(cell);
+				day.providers.set(provider, (day.providers.get(provider) ?? 0) + value);
+				day.total += value;
+				providerTotals.set(provider, (providerTotals.get(provider) ?? 0) + value);
+				let byModel = modelTotals.get(provider);
+				if (!byModel) {
+					byModel = new Map();
+					modelTotals.set(provider, byModel);
+				}
+				const modelTotal = byModel.get(model) ?? { cost: 0, tokens: 0, value: 0 };
+				modelTotal.cost += cell.cost;
+				modelTotal.tokens += tokens;
+				modelTotal.value += value;
+				byModel.set(model, modelTotal);
 			}
 		}
-		const providers = [...providerTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, total]) => ({ name, total }));
+		const providers = [...providerTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, total]) => ({
+			name,
+			total,
+			models: [...(modelTotals.get(name) ?? new Map()).entries()].sort((a, b) => b[1].value - a[1].value).map(([modelName, stats]) => ({ name: modelName, ...stats })),
+		}));
 		return { days, providers, max: Math.max(0, ...days.map((d) => d.total)), total: days.reduce((sum, d) => sum + d.total, 0) };
 	}
 
 	private renderGraph(width: number): string[] {
 		const th = this.theme;
 		const model = this.buildDailyProviderModel();
+		const formatValue = formatAxisCost;
 		const lines: string[] = [...this.renderOverviewSummary(width), th.fg("muted", "Daily total cost · by provider"), ""];
 		if (model.total === 0) return [...lines, th.fg("dim", "  No usage data for this period"), ""];
 
-		const labelW = Math.max(formatAxisCost(model.max).length, 3);
-		const plotW = Math.max(10, Math.min(Math.floor((width - labelW - 2) / 2), model.days.length));
+		const labelW = Math.max(formatValue(model.max).length, 3);
+		const slotW = 6;
+		const plotW = Math.max(1, Math.min(Math.floor((width - labelW - 2) / slotW), model.days.length));
 		const start = Math.max(0, model.days.length - plotW);
 		const days = model.days.slice(start);
-		const axisW = Math.max(0, days.length * 2 - 1);
+		const axisW = Math.max(0, days.length * slotW - 1);
 		const height = 8;
 		for (let row = height; row >= 1; row--) {
 			const threshold = (model.max * row) / height;
-			let line = th.fg("dim", `${row === height ? formatAxisCost(model.max) : row === 1 ? "$0" : ""}`.padStart(labelW) + " │");
+			let line = th.fg("dim", `${row === height ? formatValue(model.max) : row === 1 ? formatValue(0) : ""}`.padStart(labelW) + " │");
 			for (let d = 0; d < days.length; d++) {
 				const day = days[d]!;
 				let acc = 0, owner = -1;
@@ -798,18 +826,31 @@ class UsageComponent {
 					acc += day.providers.get(p.name) ?? 0;
 					if (acc >= threshold) { owner = i; break; }
 				}
-				line += (owner < 0 ? " " : seriesColor(owner) + "█" + COLOR_RESET) + (d === days.length - 1 ? "" : " ");
+				line += (owner < 0 ? " " : seriesColor(owner) + "█" + COLOR_RESET) + " ".repeat(d === days.length - 1 ? 0 : slotW - 1);
 			}
 			lines.push(line);
 		}
-		lines.push(th.fg("dim", " ".repeat(labelW) + " └" + "─".repeat(axisW)));
-		lines.push(th.fg("dim", " ".repeat(labelW + 2) + (days[0]?.label ?? "") + " ".repeat(Math.max(1, axisW - visibleWidth((days[0]?.label ?? "") + (days.at(-1)?.label ?? "")))) + (days.at(-1)?.label ?? "")));
+		lines.push(th.fg("dim", " ".repeat(labelW) + " └" + Array.from({ length: axisW }, (_, i) => i % slotW === 0 ? "┬" : "─").join("")));
+		lines.push(th.fg("dim", " ".repeat(labelW + 2) + days.map((day) => day.label.padEnd(slotW)).join("").trimEnd()));
 		lines.push("");
 		for (let i = 0; i < model.providers.length; i++) {
 			const p = model.providers[i]!;
 			const cursor = i === this.graphLegendIndex ? th.fg("accent", "▸ ") : "  ";
 			const marker = this.graphHidden.has(p.name) ? th.fg("dim", "·") : seriesColor(i) + "•" + COLOR_RESET;
-			lines.push(`${cursor}${marker} ${padRight(this.graphHidden.has(p.name) ? th.fg("dim", p.name) : p.name, 24)} ${padLeft(formatAxisCost(p.total), 8)}`);
+			lines.push(`${cursor}${marker} ${padRight(this.graphHidden.has(p.name) ? th.fg("dim", p.name) : p.name, 24)} ${padLeft(formatValue(p.total), 8)}`);
+		}
+		const detail = model.providers.find((p) => p.name === this.graphDetailProvider);
+		if (detail) {
+			const rows = detail.models.slice(0, 8);
+			const prefix = "  · ";
+			const costWidth = Math.max(visibleWidth("Cost ($)"), ...rows.map((m) => visibleWidth(formatAxisCost(m.cost))));
+			const tokenWidth = Math.max(visibleWidth("Token usage"), ...rows.map((m) => visibleWidth(formatTokens(m.tokens))));
+			const modelWidth = Math.max(visibleWidth("Model"), Math.min(Math.max(...rows.map((m) => visibleWidth(m.name))), width - visibleWidth(prefix) - costWidth - tokenWidth - 3));
+			lines.push("", th.fg("accent", `${detail.name} by model`));
+			lines.push(this.theme.fg("muted", `${prefix}${padRight("Model", modelWidth)} ${padLeft("Cost ($)", costWidth)}  ${padLeft("Token usage", tokenWidth)}`));
+			for (const m of rows) {
+				lines.push(`${prefix}${padRight(truncateToWidth(m.name, modelWidth), modelWidth)} ${padLeft(formatAxisCost(m.cost), costWidth)}  ${padLeft(formatTokens(m.tokens), tokenWidth)}`);
+			}
 		}
 		lines.push("");
 		return lines;
@@ -1100,28 +1141,41 @@ class UsageComponent {
 		const variants =
 			this.viewMode === "graph"
 				? [
-						"[Tab/←→] period  [↑↓/Enter] provider filter  [a] all  [e] export  [v] view  [q] close",
-						"[Tab] period  [↑↓/Enter] filter  [e] export  [v] view  [q] close",
-						"[↑↓] filter  [v] view  [q] close",
+						"[Tab] view  [←→] period  [↑↓] select  [Enter/click] models  [Space] hide  [e] export  [q] close",
+						"[←→] period  [↑↓] select  [Enter] models  [q] close",
+						"[Enter] models  [q] close",
 						"[q] close",
 				  ]
 				: this.viewMode === "insights"
 				? [
-						"[Tab/←→] period  [↑↓] select  [e] export  [v] view  [q] close",
-						"[Tab] period  [↑↓] select  [e] export  [v] view  [q] close",
-						"[↑↓] select  [v] view  [q] close",
+						"[Tab] view  [←→] period  [↑↓] select  [e] export  [q] close",
+						"[←→] period  [↑↓] select  [e] export  [q] close",
+						"[↑↓] select  [q] close",
 						"[q] close",
 				  ]
 				: [
-						"[Tab/←→] period  [↑↓] select  [Enter] expand  [/] filter  [x] hide  [a] all  [e] export  [v] view  [q] close",
-						"[Tab] period  [↑↓] select  [Enter] expand  [/] filter  [x] hide  [e] export  [v] view  [q] close",
-						"[↑↓] select  [Enter] expand  [/] filter  [x] hide  [v] view  [q] close",
-						"[↑↓] select  [/] [x] [v] [q]",
+						"[Tab] view  [←→] period  [↑↓] select  [Enter] expand  [/] filter  [x] hide  [a] all  [e] export  [q] close",
+						"[←→] period  [↑↓] select  [Enter] expand  [/] filter  [x] hide  [e] export  [q] close",
+						"[↑↓] select  [Enter] expand  [/] filter  [x] hide  [q] close",
+						"[↑↓] select  [/] [x] [q]",
 						"[↑↓] select  [q] close",
 						"[q] close",
 				  ];
 		const line = pickFittingText(width, variants);
 		return [...noteLines, this.theme.fg("dim", line)];
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (this.viewMode !== "graph" || event.type !== "click" || event.button !== "left") return undefined;
+		const legendStart = 20;
+		const idx = event.y - legendStart;
+		const providers = this.buildDailyProviderModel().providers;
+		if (idx < 0 || idx >= providers.length) return undefined;
+		const target = providers[idx]!;
+		this.graphLegendIndex = idx;
+		this.graphDetailProvider = this.graphDetailProvider === target.name ? null : target.name;
+		this.requestRender();
+		return { handled: true, render: true };
 	}
 
 	invalidate(): void {}
@@ -1239,6 +1293,7 @@ export default function (pi: ExtensionAPI) {
 					},
 					invalidate: () => container.invalidate(),
 					handleInput: (input: string) => usage.handleInput(input),
+					handleMouse: (event: TuiMouseEvent) => usage.handleMouse({ ...event, y: event.y - 3 }),
 					dispose: () => {},
 				};
 			});
