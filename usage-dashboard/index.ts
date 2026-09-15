@@ -781,14 +781,16 @@ class UsageComponent {
 		if (model.total === 0) return [...lines, th.fg("dim", "  No usage data for this period"), ""];
 
 		const labelW = Math.max(formatAxisCost(model.max).length, 3);
-		const plotW = Math.max(10, Math.min(width - labelW - 2, model.days.length));
+		const plotW = Math.max(10, Math.min(Math.floor((width - labelW - 2) / 2), model.days.length));
 		const start = Math.max(0, model.days.length - plotW);
 		const days = model.days.slice(start);
+		const axisW = Math.max(0, days.length * 2 - 1);
 		const height = 8;
 		for (let row = height; row >= 1; row--) {
 			const threshold = (model.max * row) / height;
 			let line = th.fg("dim", `${row === height ? formatAxisCost(model.max) : row === 1 ? "$0" : ""}`.padStart(labelW) + " │");
-			for (const day of days) {
+			for (let d = 0; d < days.length; d++) {
+				const day = days[d]!;
 				let acc = 0, owner = -1;
 				for (let i = 0; i < model.providers.length; i++) {
 					const p = model.providers[i]!;
@@ -796,12 +798,12 @@ class UsageComponent {
 					acc += day.providers.get(p.name) ?? 0;
 					if (acc >= threshold) { owner = i; break; }
 				}
-				line += owner < 0 ? " " : seriesColor(owner) + "█" + COLOR_RESET;
+				line += (owner < 0 ? " " : seriesColor(owner) + "█" + COLOR_RESET) + (d === days.length - 1 ? "" : " ");
 			}
 			lines.push(line);
 		}
-		lines.push(th.fg("dim", " ".repeat(labelW) + " └" + "─".repeat(days.length)));
-		lines.push(th.fg("dim", " ".repeat(labelW + 2) + (days[0]?.label ?? "") + " ".repeat(Math.max(1, days.length - 12)) + (days.at(-1)?.label ?? "")));
+		lines.push(th.fg("dim", " ".repeat(labelW) + " └" + "─".repeat(axisW)));
+		lines.push(th.fg("dim", " ".repeat(labelW + 2) + (days[0]?.label ?? "") + " ".repeat(Math.max(1, axisW - visibleWidth((days[0]?.label ?? "") + (days.at(-1)?.label ?? "")))) + (days.at(-1)?.label ?? "")));
 		lines.push("");
 		for (let i = 0; i < model.providers.length; i++) {
 			const p = model.providers[i]!;
@@ -824,11 +826,14 @@ class UsageComponent {
 		const total = detail ? detail.chars : this.promptSections.reduce((sum, section) => sum + section.chars, 0);
 		const source = this.historySelected ? `History ${this.historySelected.slice(0, 8)}` : "Current session";
 		const lines = [th.bold(detail ? `${detail.label} sources` : `${source} prompt sources`), th.fg("dim", detail ? "Esc back · source sizes" : "Assembled system prompt · source sizes · Enter details"), ""];
+		const colors: ("accent" | "success" | "warning" | "thinkingHigh")[] = ["accent", "success", "warning", "thinkingHigh"];
 		if (!detail) {
 			const widthBar = Math.max(20, Math.min(width - 4, 60));
-			const colors: ("accent" | "success" | "warning" | "thinkingHigh")[] = ["accent", "success", "warning", "thinkingHigh"];
 			let bar = "";
-			for (let i = 0; i < rows.length; i++) bar += th.fg(colors[i % colors.length]!, "█".repeat(Math.round(rows[i]!.chars / Math.max(total, 1) * widthBar)));
+			for (let i = 0; i < rows.length; i++) {
+				if (i > 0) bar += " ";
+				bar += th.fg(colors[i % colors.length]!, "▬".repeat(Math.round(rows[i]!.chars / Math.max(total, 1) * widthBar)));
+			}
 			lines.push(bar, "");
 		}
 		for (let i = 0; i < rows.length; i++) {
@@ -837,8 +842,9 @@ class UsageComponent {
 			const pct = total ? `${(chars / total * 100).toFixed(1)}%` : "0.0%";
 			const selected = i === this.insightIndex;
 			const marker = selected ? th.fg("accent", "▸ ") : th.fg("dim", "· ");
+			const indicator = detail ? "" : th.fg(colors[i % colors.length]!, "■ ");
 			const suffix = th.fg("dim", `${formatNumber(chars)} chars  ${pct}`);
-			lines.push(`${marker}${selected ? th.fg("accent", row.label) : row.label}${" ".repeat(Math.max(1, width - visibleWidth(marker + row.label + suffix)))}${suffix}`);
+			lines.push(`${marker}${indicator}${selected ? th.fg("accent", row.label) : row.label}${" ".repeat(Math.max(1, width - visibleWidth(marker + indicator + row.label + suffix)))}${suffix}`);
 		}
 		lines.push("", th.fg("dim", "[↑↓] select  [Enter] open  [Esc] back"));
 		return lines;
