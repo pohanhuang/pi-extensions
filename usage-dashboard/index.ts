@@ -755,7 +755,7 @@ class UsageComponent {
 		return [truncateToWidth(summary, width), truncateToWidth(stats, width), ""];
 	}
 
-	private buildDailyProviderModel(): { days: { label: string; total: number; providers: Map<string, number> }[]; providers: { name: string; total: number; models: { name: string; cost: number; tokens: number; value: number }[] }[]; max: number; total: number } {
+	private buildDailyProviderModel(): { days: { label: string; total: number; providers: Map<string, number> }[]; providers: { name: string; total: number; tokens: number; models: { name: string; cost: number; tokens: number; value: number }[] }[]; max: number; total: number } {
 		const now = this.data.bounds.nowMs;
 		const start = this.activeTab === "today" ? this.data.bounds.todayMs : this.activeTab === "thisWeek" ? this.data.bounds.weekStartMs : this.activeTab === "lastWeek" ? this.data.bounds.lastWeekStartMs : this.activeTab === "last30Days" ? this.data.bounds.last30DaysStartMs : Math.min(...this.data.hourly.keys(), this.data.bounds.todayMs);
 		const end = this.activeTab === "lastWeek" ? this.data.bounds.weekStartMs : now;
@@ -792,11 +792,10 @@ class UsageComponent {
 				byModel.set(model, modelTotal);
 			}
 		}
-		const providers = [...providerTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, total]) => ({
-			name,
-			total,
-			models: [...(modelTotals.get(name) ?? new Map()).entries()].sort((a, b) => b[1].value - a[1].value).map(([modelName, stats]) => ({ name: modelName, ...stats })),
-		}));
+		const providers = [...providerTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, total]) => {
+			const models = [...(modelTotals.get(name) ?? new Map()).entries()].sort((a, b) => b[1].value - a[1].value).map(([modelName, stats]) => ({ name: modelName, ...stats }));
+			return { name, total, tokens: models.reduce((sum, model) => sum + model.tokens, 0), models };
+		});
 		return { days, providers, max: Math.max(0, ...days.map((d) => d.total)), total: days.reduce((sum, d) => sum + d.total, 0) };
 	}
 
@@ -835,19 +834,21 @@ class UsageComponent {
 		lines.push("");
 		const detail = model.providers.find((p) => p.name === this.graphDetailProvider);
 		const rows = detail?.models.slice(0, 8) ?? [];
-		const prefix = "      ";
-		const costWidth = Math.max(visibleWidth("Cost ($)"), ...rows.map((m) => visibleWidth(formatAxisCost(m.cost))));
-		const tokenWidth = Math.max(visibleWidth("Token usage"), ...rows.map((m) => visibleWidth(formatTokens(m.tokens))));
-		const modelWidth = Math.max(visibleWidth("Model"), Math.min(Math.max(visibleWidth("Model"), ...rows.map((m) => visibleWidth(m.name))), width - visibleWidth(prefix) - costWidth - tokenWidth - 3));
+		const providerWidth = Math.max(24, ...model.providers.map((p) => visibleWidth(p.name)), ...rows.map((m) => visibleWidth(m.name)));
+		const costWidth = Math.max(visibleWidth("Cost ($)"), ...model.providers.map((p) => visibleWidth(formatValue(p.total))), ...rows.map((m) => visibleWidth(formatAxisCost(m.cost))));
+		const tokenWidth = Math.max(visibleWidth("Token usage"), ...model.providers.map((p) => visibleWidth(formatTokens(p.tokens))), ...rows.map((m) => visibleWidth(formatTokens(m.tokens))));
+		const treeIndent = "  ";
+		lines.push(th.fg("muted", `${treeIndent}    ${padRight("Model", providerWidth)} ${padLeft("Cost ($)", costWidth)}  ${padLeft("Token usage", tokenWidth)}`));
 		for (let i = 0; i < model.providers.length; i++) {
 			const p = model.providers[i]!;
 			const cursor = i === this.graphLegendIndex ? th.fg("accent", "▸ ") : "  ";
-			const marker = this.graphHidden.has(p.name) ? th.fg("dim", "·") : seriesColor(i) + "•" + COLOR_RESET;
-			lines.push(`${cursor}${marker} ${padRight(this.graphHidden.has(p.name) ? th.fg("dim", p.name) : p.name, 24)} ${padLeft(formatValue(p.total), 8)}`);
+			const name = this.graphHidden.has(p.name) ? th.fg("dim", p.name) : i === this.graphLegendIndex ? th.fg("accent", p.name) : p.name;
+			lines.push(`${treeIndent}${cursor}${padRight(name, providerWidth + 2)} ${padLeft(formatValue(p.total), costWidth)}  ${padLeft(formatTokens(p.tokens), tokenWidth)}`);
 			if (p !== detail) continue;
-			lines.push(this.theme.fg("muted", `${prefix}${padRight("Model", modelWidth)} ${padLeft("Cost ($)", costWidth)}  ${padLeft("Token usage", tokenWidth)}`));
-			for (const m of rows) {
-				lines.push(`${prefix}${padRight(truncateToWidth(m.name, modelWidth), modelWidth)} ${padLeft(formatAxisCost(m.cost), costWidth)}  ${padLeft(formatTokens(m.tokens), tokenWidth)}`);
+			for (let j = 0; j < rows.length; j++) {
+				const m = rows[j]!;
+				const branch = j === rows.length - 1 ? "└" : "├";
+				lines.push(`${treeIndent}  ${branch} ${padRight(truncateToWidth(m.name, providerWidth), providerWidth)} ${padLeft(formatAxisCost(m.cost), costWidth)}  ${padLeft(formatTokens(m.tokens), tokenWidth)}`);
 			}
 		}
 		lines.push("");
