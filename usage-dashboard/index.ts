@@ -833,20 +833,18 @@ class UsageComponent {
 		lines.push(th.fg("dim", " ".repeat(labelW) + " └" + Array.from({ length: axisW }, (_, i) => i % slotW === 0 ? "┬" : "─").join("")));
 		lines.push(th.fg("dim", " ".repeat(labelW + 2) + days.map((day) => day.label.padEnd(slotW)).join("").trimEnd()));
 		lines.push("");
+		const detail = model.providers.find((p) => p.name === this.graphDetailProvider);
+		const rows = detail?.models.slice(0, 8) ?? [];
+		const prefix = "      ";
+		const costWidth = Math.max(visibleWidth("Cost ($)"), ...rows.map((m) => visibleWidth(formatAxisCost(m.cost))));
+		const tokenWidth = Math.max(visibleWidth("Token usage"), ...rows.map((m) => visibleWidth(formatTokens(m.tokens))));
+		const modelWidth = Math.max(visibleWidth("Model"), Math.min(Math.max(visibleWidth("Model"), ...rows.map((m) => visibleWidth(m.name))), width - visibleWidth(prefix) - costWidth - tokenWidth - 3));
 		for (let i = 0; i < model.providers.length; i++) {
 			const p = model.providers[i]!;
 			const cursor = i === this.graphLegendIndex ? th.fg("accent", "▸ ") : "  ";
 			const marker = this.graphHidden.has(p.name) ? th.fg("dim", "·") : seriesColor(i) + "•" + COLOR_RESET;
 			lines.push(`${cursor}${marker} ${padRight(this.graphHidden.has(p.name) ? th.fg("dim", p.name) : p.name, 24)} ${padLeft(formatValue(p.total), 8)}`);
-		}
-		const detail = model.providers.find((p) => p.name === this.graphDetailProvider);
-		if (detail) {
-			const rows = detail.models.slice(0, 8);
-			const prefix = "  · ";
-			const costWidth = Math.max(visibleWidth("Cost ($)"), ...rows.map((m) => visibleWidth(formatAxisCost(m.cost))));
-			const tokenWidth = Math.max(visibleWidth("Token usage"), ...rows.map((m) => visibleWidth(formatTokens(m.tokens))));
-			const modelWidth = Math.max(visibleWidth("Model"), Math.min(Math.max(...rows.map((m) => visibleWidth(m.name))), width - visibleWidth(prefix) - costWidth - tokenWidth - 3));
-			lines.push("", th.fg("accent", `${detail.name} by model`));
+			if (p !== detail) continue;
 			lines.push(this.theme.fg("muted", `${prefix}${padRight("Model", modelWidth)} ${padLeft("Cost ($)", costWidth)}  ${padLeft("Token usage", tokenWidth)}`));
 			for (const m of rows) {
 				lines.push(`${prefix}${padRight(truncateToWidth(m.name, modelWidth), modelWidth)} ${padLeft(formatAxisCost(m.cost), costWidth)}  ${padLeft(formatTokens(m.tokens), tokenWidth)}`);
