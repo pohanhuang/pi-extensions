@@ -1,22 +1,29 @@
 /**
  * pi-herdr-blocked
  *
- * Bridges Pi's native ui_prompt_start / ui_prompt_end events to herdr:blocked,
- * so herdr shows "blocked" (not "working") when Pi is waiting for user input.
+ * Maps Pi events to herdr:blocked on the shared event bus.
  *
- * Works with the herdr-agent-state.ts integration (v9+) which already
- * consumes herdr:blocked — this extension just fills the missing signal.
- *
- * Pi ──ui_prompt_start──► pi.events.emit("herdr:blocked", { active: true })
- *                                   ↓
- *                         herdr-agent-state.ts → pane.report_agent blocked
- *
- * Pi ──ui_prompt_end────► pi.events.emit("herdr:blocked", { active: false })
- *                                   ↓
- *                         herdr-agent-state.ts → pane.report_agent working/idle
+ * 1. UI overlay (ctx.ui.input / permission-system) → always blocked
+ * 2. agent_settled → blocked only if the last assistant message looks like a question
  */
 export default function (pi: any) {
-  // UI overlay (ctx.ui.input / permission-system) → blocked
+  let lastAssistantText = "";
+
+  // Track the last assistant message content
+  pi.on("message_end", async (event: any) => {
+    if (event.message?.role !== "assistant") return;
+    const content = event.message?.content;
+    if (typeof content === "string") {
+      lastAssistantText = content;
+    } else if (Array.isArray(content)) {
+      lastAssistantText = content
+        .filter((b: any) => b.type === "text")
+        .map((b: any) => b.text)
+        .join("");
+    }
+  });
+
+  // UI overlay → blocked
   pi.on("ui_prompt_start", async (_event: any) => {
     pi.events.emit("herdr:blocked", { active: true });
   });
@@ -25,16 +32,17 @@ export default function (pi: any) {
     pi.events.emit("herdr:blocked", { active: false });
   });
 
-  // Agent replied in plain text and is waiting for user → also blocked
+  // agent_settled → blocked only if the last reply looks like a question
   pi.on("agent_settled", async (_event: any) => {
-    console.error("[pi-herdr-blocked] agent_settled fired");
-    pi.events.emit("herdr:blocked", { active: true });
-    console.error("[pi-herdr-blocked] emitted herdr:blocked active=true");
+    const text = lastAssistantText.trim();
+    const looksLikeQuestion = text.endsWith("?") || /\?\s*$/.test(text);
+    if (looksLikeQuestion) {
+      pi.events.emit("herdr:blocked", { active: true });
+    }
   });
 
-  // User sent a message, agent starts working → unblock
+  // User sent a message → unblock
   pi.on("agent_start", async (_event: any) => {
-    console.error("[pi-herdr-blocked] agent_start fired");
     pi.events.emit("herdr:blocked", { active: false });
   });
 }
