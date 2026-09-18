@@ -1,5 +1,5 @@
 {
-  "name": "@po.dev/pi-herdr-blocker",
+  "name": "@po.dev/pi-ask-me",
   "version": "0.1.0",
   "description": "Report blocked state to herdr, plus an ask_me tool that blocks the turn",
   "keywords": [

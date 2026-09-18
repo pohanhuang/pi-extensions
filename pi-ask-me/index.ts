@@ -1,5 +1,5 @@
 /**
- * pi-herdr-blocker
+ * pi-ask-me
  *
  * 1. Bridges Pi 0.84.4+ ui_prompt_start/end events → herdr:blocked.
  *    Fires when ctx.ui.select / confirm / input / editor / custom opens.
