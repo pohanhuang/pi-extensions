@@ -221,7 +221,9 @@ export default function (pi: ExtensionAPI) {
 		description: "Update workspace.md. /ws [section] to target a section, /ws to pick from menu.",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const s = ensure(ctx.cwd);
-			let section = args.trim().toLowerCase();
+			const parts = args.trim().split(/\s+/);
+			let section = parts[0]?.toLowerCase() ?? "";
+			const extra = parts.slice(1).join(" ").trim();
 
 			// No args → show selector
 			if (!section) {
@@ -248,9 +250,10 @@ export default function (pi: ExtensionAPI) {
 			} else {
 				const label = section.charAt(0).toUpperCase() + section.slice(1);
 				const exists = parseHeaders(s.wsFile).some(h => h.toLowerCase() === section);
+				const hint = extra ? ` Focus on this in particular: ${extra}.` : "";
 				prompt = exists
-					? `Based on our conversation, update the **# ${label}** section in workspace.md (${s.wsFile}). Keep other sections untouched. High-level and concise.`
-					: `Append a new **# ${label}** section at the end of workspace.md (${s.wsFile}) based on our conversation. High-level and concise.`;
+					? `Based on our conversation, update the **# ${label}** section in workspace.md (${s.wsFile}). Keep other sections untouched. High-level and concise.${hint}`
+					: `Append a new **# ${label}** section at the end of workspace.md (${s.wsFile}) based on our conversation. High-level and concise.${hint}`;
 			}
 
 			pi.sendUserMessage(prompt);
