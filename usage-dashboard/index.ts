@@ -39,15 +39,54 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-type ViewMode = "table" | "insights" | "history" | "graph";
+// =============================================================================
+// Footer Settings
+// =============================================================================
 
-const VIEW_CYCLE: ViewMode[] = ["graph", "table", "insights", "history"]; 
+interface FooterSettings {
+	showSession: boolean;
+	showToday: boolean;
+	showContext: boolean;
+}
+
+const DEFAULT_FOOTER_SETTINGS: FooterSettings = {
+	showSession: true,
+	showToday: false,
+	showContext: true,
+};
+
+const FOOTER_SETTING_ITEMS: { key: keyof FooterSettings; label: string; description: string }[] = [
+	{ key: "showSession", label: "Show session usage", description: "Cost & tokens for the current session" },
+	{ key: "showToday", label: "Show today's usage", description: "Cost & tokens aggregated for today" },
+	{ key: "showContext", label: "Show context %", description: "Context window usage percentage" },
+];
+
+function footerSettingsPath(): string {
+	return join(getAgentDir(), "token-dashboard", "footer-settings.json");
+}
+
+function loadFooterSettings(): FooterSettings {
+	try {
+		const raw: unknown = JSON.parse(readFileSync(footerSettingsPath(), "utf8"));
+		return typeof raw === "object" && raw !== null ? { ...DEFAULT_FOOTER_SETTINGS, ...(raw as Partial<FooterSettings>) } : { ...DEFAULT_FOOTER_SETTINGS };
+	} catch { return { ...DEFAULT_FOOTER_SETTINGS }; }
+}
+
+function saveFooterSettings(settings: FooterSettings): void {
+	mkdirSync(join(getAgentDir(), "token-dashboard"), { recursive: true });
+	writeFileSync(footerSettingsPath(), JSON.stringify(settings, null, 2));
+}
+
+type ViewMode = "table" | "insights" | "history" | "graph" | "settings";
+
+const VIEW_CYCLE: ViewMode[] = ["graph", "table", "insights", "history", "settings"]; 
 
 const VIEW_LABELS: Record<ViewMode, string> = {
 	graph: "Overview",
 	table: "Usage",
 	insights: "Insights",
 	history: "History",
+	settings: "Settings",
 };
 
 type PromptItem = { label: string; chars: number; text?: string };
@@ -388,8 +427,11 @@ class UsageComponent {
 	private historySelected: string | null = null;
 	private currentSessionId: string;
 	private currentPrompt: string;
+	private footerSettings: FooterSettings;
+	private settingsIndex = 0;
+	private onSettingsChange: (settings: FooterSettings) => void;
 
-	constructor(theme: Theme, data: UsageData, prompt: string, currentSessionId: string, requestRender: () => void, done: () => void) {
+	constructor(theme: Theme, data: UsageData, prompt: string, currentSessionId: string, requestRender: () => void, done: () => void, footerSettings: FooterSettings, onSettingsChange: (settings: FooterSettings) => void) {
 		this.theme = theme;
 		this.requestRender = requestRender;
 		this.done = done;
@@ -397,6 +439,8 @@ class UsageComponent {
 		this.currentSessionId = currentSessionId;
 		this.currentPrompt = prompt;
 		this.promptSections = promptSections(prompt);
+		this.footerSettings = { ...footerSettings };
+		this.onSettingsChange = onSettingsChange;
 		this.updateProviderOrder();
 	}
 
@@ -524,6 +568,7 @@ class UsageComponent {
 		}
 		if (this.viewMode === "insights" && this.handleInsightInput(data)) return;
 		if (this.viewMode === "history" && this.handleHistoryInput(data)) return;
+		if (this.viewMode === "settings" && this.handleSettingsInput(data)) return;
 
 		if (matchesKey(data, "right")) {
 			const idx = TAB_ORDER.indexOf(this.activeTab);
@@ -636,6 +681,25 @@ class UsageComponent {
 		return true;
 	}
 
+	private handleSettingsInput(data: string): boolean {
+		if (matchesKey(data, "up")) {
+			this.settingsIndex = Math.max(0, this.settingsIndex - 1);
+		} else if (matchesKey(data, "down")) {
+			this.settingsIndex = Math.min(FOOTER_SETTING_ITEMS.length - 1, this.settingsIndex + 1);
+		} else if (matchesKey(data, "enter") || matchesKey(data, "space")) {
+			const item = FOOTER_SETTING_ITEMS[this.settingsIndex];
+			if (item) {
+				this.footerSettings = { ...this.footerSettings, [item.key]: !this.footerSettings[item.key] };
+				saveFooterSettings(this.footerSettings);
+				this.onSettingsChange(this.footerSettings);
+			}
+		} else {
+			return false;
+		}
+		this.requestRender();
+		return true;
+	}
+
 	private handleHistoryInput(data: string): boolean {
 		if (this.historySelected && (matchesKey(data, "up") || matchesKey(data, "down") || matchesKey(data, "enter"))) return this.handleInsightInput(data);
 		const sessions = Array.from(this.data.sessions.values()).sort((a, b) => b.timestamp - a.timestamp);
@@ -721,6 +785,10 @@ class UsageComponent {
 
 		if (this.viewMode === "history") {
 			return clampLines([...this.renderTitle(width), ...this.renderHistory(width)], width);
+		}
+
+		if (this.viewMode === "settings") {
+			return clampLines([...this.renderTitle(width), ...this.renderSettings(width)], width);
 		}
 
 		const layout = getTableLayout(width);
@@ -1123,6 +1191,21 @@ class UsageComponent {
 		return [th.fg("border", "─".repeat(layout.tableWidth)), totalRow, ""];
 	}
 
+	private renderSettings(width: number): string[] {
+		const th = this.theme;
+		const lines = [th.bold("Footer display settings"), th.fg("dim", "Choose what appears in the usage footer · changes apply immediately"), ""];
+		for (let i = 0; i < FOOTER_SETTING_ITEMS.length; i++) {
+			const item = FOOTER_SETTING_ITEMS[i]!;
+			const selected = i === this.settingsIndex;
+			const checked = this.footerSettings[item.key] ? th.fg("success", "☑") : th.fg("dim", "☐");
+			const marker = selected ? th.fg("accent", "▸ ") : "  ";
+			const label = selected ? th.fg("accent", item.label) : item.label;
+			lines.push(`${marker}${checked} ${label}  ${th.fg("dim", item.description)}`);
+		}
+		lines.push("", th.fg("dim", "[↑↓] select  [Enter/Space] toggle  [Tab] view  [q] close"));
+		return lines;
+	}
+
 	private renderFormulaNote(width: number): string[] {
 		const line = pickFittingText(width, [
 			"Tokens = Input + Output + CacheWrite  ·  ↑In = Input + CacheWrite  (as of 0.2.0)",
@@ -1192,20 +1275,24 @@ function footerModelLabel(ctx: Pick<ExtensionCommandContext, "model" | "thinking
 	return model.reasoning && ctx.thinkingLevel ? `${label} • ${ctx.thinkingLevel}` : label;
 }
 
-function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thinkingLevel" | "getContextUsage">, totals: TotalStats, sessionTotals: TotalStats | null): void {
+function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thinkingLevel" | "getContextUsage">, totals: TotalStats, sessionTotals: TotalStats | null, settings: FooterSettings): void {
 	ctx.ui.setFooter((_tui, theme) => ({
 		invalidate() {},
 		render(width: number): string[] {
 			const context = ctx.getContextUsage();
 			const compactAt = context ? context.contextWindow - 16_384 : 0;
 			const left = context?.tokens === null ? "?" : context ? formatTokens(Math.max(0, compactAt - context.tokens)) : "?";
-			const contextStatus = context
+			const contextStatus = settings.showContext && context
 				? " · " + theme.fg("warning", `${context.percent?.toFixed(1) ?? "?"}%`) + theme.fg("dim", "/") + theme.fg("success", `${left} left`) + " " + theme.fg("accent", "(auto)")
 				: "";
-			const sessionPart = sessionTotals
-				? theme.fg("success", "(Session)") + " · " + theme.fg("accent", formatCost(sessionTotals.cost)) + " · " + theme.fg("text", `${formatTokens(sessionTotals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(sessionTotals.tokens.input + sessionTotals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(sessionTotals.tokens.output)}`) + "  "
-				: "";
-			const usage = theme.fg("thinkingHigh", "Usage:") + " " + sessionPart + theme.fg("accent", "(Today)") + " · " + theme.fg("accent", formatCost(totals.cost)) + " · " + theme.fg("text", `${formatTokens(totals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(totals.tokens.input + totals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(totals.tokens.output)}`) + " · " + theme.fg("thinkingHigh", `${formatTokens(totals.tokens.cacheRead + totals.tokens.cacheWrite)} cache`) + contextStatus;
+			const bodyParts: string[] = [];
+			if (settings.showSession && sessionTotals) {
+				bodyParts.push(theme.fg("success", "(Session)") + " · " + theme.fg("accent", formatCost(sessionTotals.cost)) + " · " + theme.fg("text", `${formatTokens(sessionTotals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(sessionTotals.tokens.input + sessionTotals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(sessionTotals.tokens.output)}`));
+			}
+			if (settings.showToday) {
+				bodyParts.push(theme.fg("accent", "(Today)") + " · " + theme.fg("accent", formatCost(totals.cost)) + " · " + theme.fg("text", `${formatTokens(totals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(totals.tokens.input + totals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(totals.tokens.output)}`) + " · " + theme.fg("thinkingHigh", `${formatTokens(totals.tokens.cacheRead + totals.tokens.cacheWrite)} cache`));
+			}
+			const usage = (bodyParts.length ? bodyParts.join("  ") : "") + contextStatus;
 			const model = theme.fg("accent", footerModelLabel(ctx));
 			const gap = width - visibleWidth(usage) - visibleWidth(model);
 			return [gap >= 2 ? usage + " ".repeat(gap) + model : truncateToWidth(usage, width)];
@@ -1215,6 +1302,7 @@ function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thi
 
 export default function (pi: ExtensionAPI) {
 	let sessionTotals: TotalStats = { sessions: 0, messages: 0, cost: 0, tokens: { total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+	let footerSettings = loadFooterSettings();
 
 	const refreshFooter = (ctx: Pick<ExtensionCommandContext, "hasUI" | "ui" | "model" | "thinkingLevel" | "getContextUsage">) => {
 		if (!ctx.hasUI) return;
@@ -1226,7 +1314,7 @@ export default function (pi: ExtensionAPI) {
 				totals.messages += stats.messages; totals.cost += stats.cost;
 				totals.tokens.total += stats.tokens.total; totals.tokens.input += stats.tokens.input; totals.tokens.output += stats.tokens.output; totals.tokens.cacheRead += stats.tokens.cacheRead; totals.tokens.cacheWrite += stats.tokens.cacheWrite;
 			}
-			setUsageFooter(ctx, totals, sessionTotals);
+			setUsageFooter(ctx, totals, sessionTotals, footerSettings);
 		});
 	};
 	const snapshotPrompt = (ctx: { sessionManager: { getSessionId(): string }; getSystemPrompt(): string }) => {
@@ -1309,7 +1397,7 @@ export default function (pi: ExtensionAPI) {
 				container.addChild(new DynamicBorder((s: string) => theme.fg("border", s)));
 				container.addChild(new Spacer(1));
 
-				const usage = new UsageComponent(theme, data, ctx.getSystemPrompt(), ctx.sessionManager.getSessionId(), () => tui.requestRender(), () => done());
+				const usage = new UsageComponent(theme, data, ctx.getSystemPrompt(), ctx.sessionManager.getSessionId(), () => tui.requestRender(), () => done(), footerSettings, (newSettings) => { footerSettings = newSettings; refreshFooter(ctx); });
 
 				return {
 					render: (w: number) => {

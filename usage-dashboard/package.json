@@ -1,6 +1,6 @@
 {
   "name": "@po.dev/pi-usage-dashboard",
-  "version": "0.1.8",
+  "version": "0.1.10",
   "description": "Local token and cost dashboard for pi sessions",
   "keywords": [
     "pi-package",
