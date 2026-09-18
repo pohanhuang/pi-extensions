@@ -253,7 +253,7 @@ export default function (pi: ExtensionAPI) {
 					: `Append a new **# ${label}** section at the end of workspace.md (${s.wsFile}) based on our conversation. High-level and concise.`;
 			}
 
-			await ctx.sendUserMessage(prompt);
+			pi.sendUserMessage(prompt);
 		},
 	});
 }
