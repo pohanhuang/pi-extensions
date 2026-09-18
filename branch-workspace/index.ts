@@ -145,7 +145,7 @@ export default function (pi: ExtensionAPI) {
 		const s = ensure(ctx.cwd);
 		const agentsMd = existsSync(join(ctx.cwd, "AGENTS.md")) ? join(ctx.cwd, "AGENTS.md") : join(ctx.cwd, ".pi", "agents.md");
 		const guard = s.mode === "discuss"
-			? `\n\nMODE GUARD: mode is discuss. No code changes, installs, commits, or mutations to project files. You MAY write to workspace.md (${s.wsFile}) to capture notes.`
+			? `\n\nMODE GUARD: mode is discuss. Lead with questions — if the request is at all ambiguous, ask before answering instead of guessing. No code changes, installs, commits, or mutations to project files. You MAY write to workspace.md (${s.wsFile}) to capture notes.`
 			: "";
 		return {
 			systemPrompt: `${event.systemPrompt}\n\n## Per-Branch Workspace\nBranch: ${branch(ctx.cwd)}\nWorkspace: ${s.dir}\nCurrent mode: ${s.mode}${guard}\n\n### ${agentsMd.endsWith("AGENTS.md") ? "AGENTS.md" : ".pi/agents.md"}\n${read(agentsMd)}\n\n### workspace.md\n${read(s.wsFile)}`,
