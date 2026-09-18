@@ -235,7 +235,7 @@ export default function (pi: ExtensionAPI) {
 			if (!section) {
 				const headers = parseHeaders(s.wsFile);
 				const SEP = "─────";
-				const options = [...headers, SEP, "refine", "new section..."];
+				const options = [...headers, SEP, "refine", "commit", "new section..."];
 				const choice = await ctx.ui.select("Update workspace section:", options);
 				if (!choice || choice === SEP) return;
 
@@ -251,7 +251,9 @@ export default function (pi: ExtensionAPI) {
 			await ctx.waitForIdle();
 
 			let prompt: string;
-			if (section === "refine") {
+			if (section === "commit") {
+				prompt = `Commit all uncommitted changes in this repo with bash: \`git add -A\` then \`git commit -m "wip: <summary>"\` where <summary> is your own one-line summary of what changed (run \`git status\` and \`git diff\` first to write it). Nothing else.${extra ? ` Context: ${extra}.` : ""}`;
+			} else if (section === "refine") {
 				prompt = `Refine the writing in workspace.md (${s.wsFile}) — fix grammar, improve clarity and conciseness. Do not change meaning or content. Preserve all # H1 headers exactly as-is.`;
 			} else {
 				const label = section.charAt(0).toUpperCase() + section.slice(1);

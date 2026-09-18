@@ -30,6 +30,7 @@ pi -e ./branch-workspace/index.ts
 /ws                    pick a workspace section to update from conversation
 /ws plan               update the Plan section
 /ws <section>          update or create any section
+/ws commit             commit all uncommitted changes as "wip: <agent summary>"
 ```
 
 ## Workspace layout
