@@ -128,13 +128,17 @@ function recordChange(changesFile: string, hash: string, files: string[]): void 
 // =============================================================================
 
 export default function (pi: ExtensionAPI) {
+	// Files written during the current agent turn, flushed to git on agent_settled.
 	let pendingFiles = new Set<string>();
 
+	// On session start / reload: validate .mode and warn if it was reset.
 	pi.on("session_start", (_event, ctx) => {
 		const s = ensure(ctx.cwd);
 		if (s.reset && ctx.hasUI) ctx.ui.notify("Invalid .mode reset to discuss", "warning");
 	});
 
+	// Inject branch workspace context (AGENTS.md + workspace.md) into every agent turn.
+	// In discuss mode, append a guard that blocks the agent from making code changes.
 	pi.on("before_agent_start", (event, ctx) => {
 		const s = ensure(ctx.cwd);
 		const agentsMd = existsSync(join(ctx.cwd, "AGENTS.md")) ? join(ctx.cwd, "AGENTS.md") : join(ctx.cwd, ".pi", "agents.md");
@@ -146,6 +150,8 @@ export default function (pi: ExtensionAPI) {
 		};
 	});
 
+	// Gate tool calls based on current mode.
+	// .mode file is always read-only via tools — use /mode to change it.
 	pi.on("tool_call", (event, ctx) => {
 		const s = ensure(ctx.cwd);
 		const input = event.input as { path?: string; command?: string };
@@ -158,7 +164,7 @@ export default function (pi: ExtensionAPI) {
 
 		if (s.mode !== "discuss") return;
 
-		// discuss: allow workspace.md writes only
+		// discuss mode: only workspace.md writes are allowed
 		if (event.toolName === "write" || event.toolName === "edit") {
 			if (isWorkspaceFile(ctx.cwd, input.path)) return;
 			return { block: true, terminate: true, reason: "Blocked: in discuss mode, file writes are limited to workspace.md." };
@@ -167,7 +173,7 @@ export default function (pi: ExtensionAPI) {
 			return { block: true, terminate: true, reason: "Blocked mutating bash: no implementation in discuss mode." };
 	});
 
-	// Track files written during a turn
+	// Collect files written/edited during the turn for auto-commit.
 	pi.on("tool_result", (event, _ctx) => {
 		if (event.isError) return;
 		if (event.toolName !== "write" && event.toolName !== "edit") return;
@@ -175,7 +181,7 @@ export default function (pi: ExtensionAPI) {
 		if (input.path) pendingFiles.add(input.path);
 	});
 
-	// Auto-commit after agent settles
+	// Auto-commit all files written during the turn once the agent settles.
 	pi.on("agent_settled", (_event, ctx) => {
 		if (pendingFiles.size === 0) return;
 		const files = [...pendingFiles];
@@ -184,7 +190,7 @@ export default function (pi: ExtensionAPI) {
 		try {
 			execSync(`git add ${files.map(f => `"${f}"`).join(" ")}`, { cwd: ctx.cwd, stdio: "ignore" });
 			const names = files.map(f => f.split("/").pop()).join(", ");
-			execSync(`git commit -m "ws: ${names}"`, { cwd: ctx.cwd, stdio: "ignore" });
+			execSync(`git commit -m "feat: ${names}"`, { cwd: ctx.cwd, stdio: "ignore" });
 			const hash = execSync("git rev-parse --short HEAD", { cwd: ctx.cwd, encoding: "utf8" }).trim();
 			recordChange(s.changesFile, hash, files);
 			if (ctx.hasUI) ctx.ui.notify(`committed ${hash} · ${files.length} file(s)`, "info");
