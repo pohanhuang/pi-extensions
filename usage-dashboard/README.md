@@ -1,11 +1,27 @@
-# @po.dev/pi-usage-dashboard
+# usage-dashboard
 
-Pi extension that adds `/usage`: a local token/cost dashboard for Pi sessions.
+Pi extension for token and cost tracking.
 
-Install:
+## Install
 
 ```bash
 pi install npm:@po.dev/pi-usage-dashboard
 ```
 
-Then run `/reload` and `/usage`.
+Or load locally:
+
+```bash
+pi -e ./usage-dashboard/index.ts
+```
+
+## Features
+
+- Footer shows live session cost — survives `/reload` without resetting
+- `/usage` opens a full dashboard: daily spend, per-model breakdown, cache efficiency
+
+## Usage
+
+```
+/usage      open dashboard
+/reload     session cost persists (no reset)
+```

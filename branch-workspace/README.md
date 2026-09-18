@@ -1,30 +1,50 @@
-# @po.dev/pi-branch-workspace
+# branch-workspace
 
-Pi extension that creates a per-git-branch workspace under `.pi/<branch>/` and injects the small branch context into the system prompt.
+Pi extension that gives each git branch its own workspace and a discuss / implement mode guard.
 
-Install:
+## Install
 
 ```bash
 pi install npm:@po.dev/pi-branch-workspace
 ```
 
-Local test:
+Or load locally:
 
 ```bash
 pi -e ./branch-workspace/index.ts
 ```
 
-Mode:
+## Features
 
-```bash
-/mode                 # choose interactively
-/mode plan
-/mode discuss
-/mode implement
+- Each git branch gets `.pi/<branch>/workspace.md` injected as context every session
+- **discuss mode** — blocks all file writes and mutating bash (planning only)
+- **implement mode** — full access; auto-commits written files after each agent turn with a changelog entry
+- `AGENTS.md` (or `.pi/agents.md`) injected as shared repo instructions
+
+## Commands
+
+```
+/mode                  show current mode
+/mode discuss          switch to discuss (read-only)
+/mode implement        switch to implement (auto-commit on)
+/ws                    pick a workspace section to update from conversation
+/ws plan               update the Plan section
+/ws <section>          update or create any section
 ```
 
-Rules:
-- Missing `.mode` becomes `discuss`
-- Existing valid `.mode` is preserved
-- Invalid `.mode` resets to `discuss`
-- `plan` / `discuss` mode blocks `write`, `edit`, and mutating `bash`
+## Workspace layout
+
+```
+.pi/
+  agents.md                   shared repo instructions
+  <branch>/
+    workspace.md              plan, discussion, progress notes
+    changes.md                auto-generated commit log
+    .mode                     current mode (discuss | implement)
+```
+
+## Mode rules
+
+- Missing `.mode` → defaults to `discuss`
+- Invalid value → resets to `discuss` with a warning
+- Only `/mode` can change `.mode` — direct file writes are blocked
