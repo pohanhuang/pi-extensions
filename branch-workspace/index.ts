@@ -1,76 +1,113 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
-const MODES = ["plan", "discuss", "implement"] as const;
+const MODES = ["discuss", "implement"] as const;
 type Mode = (typeof MODES)[number];
 
-const READ_ONLY_MODES = new Set<Mode>(["plan", "discuss"]);
-const BLOCKED_TOOLS = new Set(["write", "edit"]);
+const WORKSPACE_TEMPLATE = `# Plan
 
-const TEMPLATES = {
-	agents: "# Agent Instructions\n\n<!-- Shared behavior and constraints for this repository. -->\n",
-	plan: "# Plan\n\n<!-- What problem does this branch solve, and what is the plan? -->\n",
-	discuss: "# Discussion\n\n<!-- Notes, tradeoffs, and open questions. -->\n",
-	implementation: "# Implementation\n\n## Progress\n\nNot started.\n\n## TODO\n\n- Define the implementation after planning.\n",
-};
+<!-- What problem does this branch solve, and what is the approach? -->
+
+# Discussion
+
+<!-- Notes, tradeoffs, and decisions made. -->
+
+# Progress
+
+Not started.
+
+# Next
+
+<!-- Next steps and open tasks. -->
+`;
+
+const AGENTS_TEMPLATE = "# Agent Instructions\n\n<!-- Shared behavior and constraints for this repository. -->\n";
+const CHANGES_TEMPLATE = "# Changes\n\n<!-- Auto-generated commit log. -->\n";
+
+// =============================================================================
+// Git / workspace helpers
+// =============================================================================
 
 function branch(cwd: string): string {
 	try {
-		const name = execSync("git symbolic-ref --quiet --short HEAD", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-		return name || "detached";
-	} catch {
-		return "main";
-	}
+		return execSync("git symbolic-ref --quiet --short HEAD", { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || "detached";
+	} catch { return "main"; }
 }
 
-function workspace(cwd: string): string {
+function workspaceDir(cwd: string): string {
 	return join(cwd, ".pi", branch(cwd).replace(/[\\/]/g, "-"));
 }
 
-function writeMissing(path: string, content: string, fallback?: string): void {
-	if (existsSync(path)) return;
-	writeFileSync(path, fallback && existsSync(fallback) ? readFileSync(fallback, "utf8") : content, "utf8");
-}
-
-function normalizeMode(value: string): Mode {
-	const mode = value.trim();
-	return (MODES as readonly string[]).includes(mode) ? (mode as Mode) : "discuss";
-}
-
-function ensure(cwd: string): { dir: string; mode: Mode; reset: boolean } {
-	const root = join(cwd, ".pi");
-	const dir = workspace(cwd);
-	mkdirSync(dir, { recursive: true });
-	writeMissing(join(root, "agents.md"), TEMPLATES.agents);
-	writeMissing(join(dir, "plan.md"), TEMPLATES.plan, join(dir, "context.md"));
-	writeMissing(join(dir, "discuss.md"), TEMPLATES.discuss);
-	writeMissing(join(dir, "implementation.md"), TEMPLATES.implementation, join(dir, "implement.md"));
-
-	const modePath = join(dir, ".mode");
-	let reset = false;
-	if (!existsSync(modePath)) writeFileSync(modePath, "discuss\n", "utf8");
-	const raw = readFileSync(modePath, "utf8");
-	const mode = normalizeMode(raw);
-	if (mode !== raw.trim()) {
-		writeFileSync(modePath, "discuss\n", "utf8");
-		reset = true;
-	}
-	return { dir, mode, reset };
+function writeMissing(path: string, content: string): void {
+	if (!existsSync(path)) writeFileSync(path, content, "utf8");
 }
 
 function read(path: string): string {
 	return readFileSync(path, "utf8").trimEnd();
 }
 
-function modeFile(cwd: string, path: string | undefined): boolean {
-	if (!path) return false;
-	const full = resolve(cwd, path);
-	return basename(full) === ".mode" && full.startsWith(resolve(cwd, ".pi") + "/");
+function normalizeMode(value: string): Mode {
+	const m = value.trim();
+	return (MODES as readonly string[]).includes(m) ? (m as Mode) : "discuss";
 }
 
-function writesMode(command: string): boolean {
+/** Parse H1 section names from workspace.md */
+function parseHeaders(wsFile: string): string[] {
+	try {
+		return [...readFileSync(wsFile, "utf8").matchAll(/^# (.+)$/gm)].map(m => m[1]!.trim());
+	} catch { return []; }
+}
+
+/** Migrate old plan/discuss/implementation.md → workspace.md */
+function migrateWorkspace(dir: string): void {
+	const wsFile = join(dir, "workspace.md");
+	if (existsSync(wsFile)) return;
+	const OLD = [
+		{ file: "plan.md", header: "# Plan" },
+		{ file: "discuss.md", header: "# Discussion" },
+		{ file: "implementation.md", header: "# Progress" },
+	];
+	const parts: string[] = [];
+	for (const { file, header } of OLD) {
+		const p = join(dir, file);
+		if (!existsSync(p)) continue;
+		const body = readFileSync(p, "utf8").trim();
+		if (body && body !== header) parts.push(body);
+	}
+	writeFileSync(wsFile, parts.length ? parts.join("\n\n") + "\n" : WORKSPACE_TEMPLATE, "utf8");
+}
+
+function ensure(cwd: string): { dir: string; wsFile: string; changesFile: string; mode: Mode; reset: boolean } {
+	const dir = workspaceDir(cwd);
+	mkdirSync(dir, { recursive: true });
+	writeMissing(join(cwd, ".pi", "agents.md"), AGENTS_TEMPLATE);
+	migrateWorkspace(dir);
+	const wsFile = join(dir, "workspace.md");
+	const changesFile = join(dir, "changes.md");
+	writeMissing(changesFile, CHANGES_TEMPLATE);
+
+	const modePath = join(dir, ".mode");
+	let reset = false;
+	if (!existsSync(modePath)) writeFileSync(modePath, "discuss\n", "utf8");
+	const raw = readFileSync(modePath, "utf8");
+	const mode = normalizeMode(raw);
+	if (mode !== raw.trim()) { writeFileSync(modePath, "discuss\n", "utf8"); reset = true; }
+	return { dir, wsFile, changesFile, mode, reset };
+}
+
+function isWorkspaceFile(cwd: string, filePath: string | undefined): boolean {
+	if (!filePath) return false;
+	return resolve(cwd, filePath) === resolve(join(workspaceDir(cwd), "workspace.md"));
+}
+
+function isModeFile(cwd: string, filePath: string | undefined): boolean {
+	if (!filePath) return false;
+	return resolve(cwd, filePath) === resolve(join(workspaceDir(cwd), ".mode"));
+}
+
+function writesModeViaBash(command: string): boolean {
 	return /\.mode\b/.test(command) && /(>+|tee\b|sed\s+-i|perl\s+-pi|mv\b|cp\b|rm\b)/.test(command);
 }
 
@@ -78,7 +115,21 @@ function mutatingBash(command: string): boolean {
 	return /(^|[;&|()\s])(rm|mv|cp|touch|mkdir|rmdir|ln|chmod|chown|python|python3|node|npm|pnpm|yarn|git\s+(commit|add|reset|checkout|switch|merge|rebase|clean|stash|push|pull|apply|am))\b|>>?|\btee\b/.test(command);
 }
 
+function recordChange(changesFile: string, hash: string, files: string[]): void {
+	const now = new Date().toISOString().replace("T", " ").slice(0, 16);
+	const names = files.map(f => f.split("/").pop()).join(", ");
+	const entry = `\n## ${now} · ${hash}\nFiles: ${names}\n`;
+	const existing = existsSync(changesFile) ? readFileSync(changesFile, "utf8").trimEnd() : CHANGES_TEMPLATE.trimEnd();
+	writeFileSync(changesFile, existing + "\n" + entry, "utf8");
+}
+
+// =============================================================================
+// Extension
+// =============================================================================
+
 export default function (pi: ExtensionAPI) {
+	let pendingFiles = new Set<string>();
+
 	pi.on("session_start", (_event, ctx) => {
 		const s = ensure(ctx.cwd);
 		if (s.reset && ctx.hasUI) ctx.ui.notify("Invalid .mode reset to discuss", "warning");
@@ -86,61 +137,123 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", (event, ctx) => {
 		const s = ensure(ctx.cwd);
-		const agents = existsSync(join(ctx.cwd, "AGENTS.md")) ? join(ctx.cwd, "AGENTS.md") : join(ctx.cwd, ".pi", "agents.md");
-		const docs = s.mode === "discuss"
-			? ["plan.md", "discuss.md"]
-			: s.mode === "implement"
-				? ["plan.md", "implementation.md"]
-				: ["plan.md"];
-		const guard = READ_ONLY_MODES.has(s.mode)
-			? `\n\nMODE GUARD: Current branch workspace mode is ${s.mode}. Do not implement: no file writes, edits, code changes, installs, commits, or mutating shell commands. Inspect, discuss, and plan only.`
+		const agentsMd = existsSync(join(ctx.cwd, "AGENTS.md")) ? join(ctx.cwd, "AGENTS.md") : join(ctx.cwd, ".pi", "agents.md");
+		const guard = s.mode === "discuss"
+			? `\n\nMODE GUARD: mode is discuss. No code changes, installs, commits, or mutations to project files. You MAY write to workspace.md (${s.wsFile}) to capture notes.`
 			: "";
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n## Per-Branch Workspace\nBranch: ${branch(ctx.cwd)}\nWorkspace: ${s.dir}\nCurrent mode: ${s.mode}${guard}\n\n### ${agents === join(ctx.cwd, "AGENTS.md") ? "AGENTS.md" : ".pi/agents.md"}\n${read(agents)}\n\n${docs.map((doc) => `### ${doc}\n${read(join(s.dir, doc))}`).join("\n\n")}`,
+			systemPrompt: `${event.systemPrompt}\n\n## Per-Branch Workspace\nBranch: ${branch(ctx.cwd)}\nWorkspace: ${s.dir}\nCurrent mode: ${s.mode}${guard}\n\n### ${agentsMd.endsWith("AGENTS.md") ? "AGENTS.md" : ".pi/agents.md"}\n${read(agentsMd)}\n\n### workspace.md\n${read(s.wsFile)}`,
 		};
 	});
 
 	pi.on("tool_call", (event, ctx) => {
 		const s = ensure(ctx.cwd);
 		const input = event.input as { path?: string; command?: string };
-		if ((event.toolName === "write" || event.toolName === "edit") && modeFile(ctx.cwd, input.path)) {
-			return { block: true, reason: "Use /mode plan|discuss|implement to change .mode." };
-		}
-		if (event.toolName === "bash" && input.command && writesMode(input.command)) {
-			return { block: true, reason: "Use /mode plan|discuss|implement to change .mode." };
-		}
 
-		if (!READ_ONLY_MODES.has(s.mode)) return;
-		if (BLOCKED_TOOLS.has(event.toolName)) {
-			return { block: true, terminate: true, reason: `Blocked: no implementation in ${s.mode} mode.` };
+		// Always block direct .mode manipulation
+		if ((event.toolName === "write" || event.toolName === "edit") && isModeFile(ctx.cwd, input.path))
+			return { block: true, reason: "Use /mode discuss|implement to change .mode." };
+		if (event.toolName === "bash" && input.command && writesModeViaBash(input.command))
+			return { block: true, reason: "Use /mode discuss|implement to change .mode." };
+
+		if (s.mode !== "discuss") return;
+
+		// discuss: allow workspace.md writes only
+		if (event.toolName === "write" || event.toolName === "edit") {
+			if (isWorkspaceFile(ctx.cwd, input.path)) return;
+			return { block: true, terminate: true, reason: "Blocked: in discuss mode, file writes are limited to workspace.md." };
 		}
-		if (event.toolName === "bash" && input.command && mutatingBash(input.command)) {
-			return { block: true, terminate: true, reason: `Blocked mutating bash: no implementation in ${s.mode} mode.` };
-		}
+		if (event.toolName === "bash" && input.command && mutatingBash(input.command))
+			return { block: true, terminate: true, reason: "Blocked mutating bash: no implementation in discuss mode." };
 	});
 
+	// Track files written during a turn
+	pi.on("tool_result", (event, _ctx) => {
+		if (event.isError) return;
+		if (event.toolName !== "write" && event.toolName !== "edit") return;
+		const input = event.input as { path?: string };
+		if (input.path) pendingFiles.add(input.path);
+	});
+
+	// Auto-commit after agent settles
+	pi.on("agent_settled", (_event, ctx) => {
+		if (pendingFiles.size === 0) return;
+		const files = [...pendingFiles];
+		pendingFiles = new Set();
+		const s = ensure(ctx.cwd);
+		try {
+			execSync(`git add ${files.map(f => `"${f}"`).join(" ")}`, { cwd: ctx.cwd, stdio: "ignore" });
+			const names = files.map(f => f.split("/").pop()).join(", ");
+			execSync(`git commit -m "ws: ${names}"`, { cwd: ctx.cwd, stdio: "ignore" });
+			const hash = execSync("git rev-parse --short HEAD", { cwd: ctx.cwd, encoding: "utf8" }).trim();
+			recordChange(s.changesFile, hash, files);
+			if (ctx.hasUI) ctx.ui.notify(`committed ${hash} · ${files.length} file(s)`, "info");
+		} catch { /* not a git repo or nothing new to commit */ }
+	});
+
+	// =============================================================================
+	// Commands
+	// =============================================================================
+
 	pi.registerCommand("mode", {
-		description: "Show or set branch workspace mode: plan, discuss, implement",
+		description: "Show or set workspace mode: discuss, implement",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const s = ensure(ctx.cwd);
 			const next = args.trim().split(/\s+/)[0];
 			if (!next) {
-				if (!ctx.hasUI) {
-					ctx.ui.notify(`mode: ${s.mode}`, "info");
-					return;
-				}
-				const choice = await ctx.ui.select(`Current mode: ${s.mode}. Choose mode:`, [...MODES]);
+				if (!ctx.hasUI) { ctx.ui.notify(`mode: ${s.mode}`, "info"); return; }
+				const choice = await ctx.ui.select(`Current mode: ${s.mode}`, [...MODES]);
 				if (!choice) return;
 				writeFileSync(join(s.dir, ".mode"), `${choice}\n`, "utf8");
 				ctx.ui.notify(`mode: ${choice}`, "info");
 				return;
 			}
 			if (!(MODES as readonly string[]).includes(next)) {
-				ctx.ui.notify("mode must be: plan, discuss, implement", "error");
+				ctx.ui.notify("mode must be: discuss, implement", "error");
 				return;
 			}
 			writeFileSync(join(s.dir, ".mode"), `${next}\n`, "utf8");
 			ctx.ui.notify(`mode: ${next}`, "info");
+		},
+	});
+
+	pi.registerCommand("ws", {
+		description: "Update workspace.md. /ws [section] to target a section, /ws to pick from menu.",
+		handler: async (args: string, ctx: ExtensionCommandContext) => {
+			const s = ensure(ctx.cwd);
+			let section = args.trim().toLowerCase();
+
+			// No args → show selector
+			if (!section) {
+				const headers = parseHeaders(s.wsFile);
+				const SEP = "─────";
+				const options = [...headers, SEP, "refine", "new section..."];
+				const choice = await ctx.ui.select("Update workspace section:", options);
+				if (!choice || choice === SEP) return;
+
+				if (choice === "new section...") {
+					const name = await ctx.ui.input("Section name:", "");
+					if (!name?.trim()) return;
+					section = name.trim().toLowerCase();
+				} else {
+					section = choice.toLowerCase();
+				}
+			}
+
+			await ctx.waitForIdle();
+
+			let prompt: string;
+			if (section === "refine") {
+				prompt = `Refine the writing in workspace.md (${s.wsFile}) — fix grammar, improve clarity and conciseness. Do not change meaning or content. Preserve all # H1 headers exactly as-is.`;
+			} else {
+				const label = section.charAt(0).toUpperCase() + section.slice(1);
+				const exists = parseHeaders(s.wsFile).some(h => h.toLowerCase() === section);
+				prompt = exists
+					? `Based on our conversation, update the **# ${label}** section in workspace.md (${s.wsFile}). Keep other sections untouched. High-level and concise.`
+					: `Append a new **# ${label}** section at the end of workspace.md (${s.wsFile}) based on our conversation. High-level and concise.`;
+			}
+
+			await ctx.sendUserMessage(prompt);
 		},
 	});
 }
