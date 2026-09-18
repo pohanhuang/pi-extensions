@@ -8,6 +8,9 @@
  * Plain-text agent replies do NOT block — there is no Pi signal for that.
  */
 import { Type } from "typebox";
+import { Text } from "@earendil-works/pi-tui";
+
+const blank = () => new Text("", 0, 0);
 
 export default function (pi: any) {
 	pi.on("ui_prompt_start", () => pi.events.emit("herdr:blocked", { active: true }));
@@ -30,5 +33,8 @@ export default function (pi: any) {
 				: await ctx.ui.input(params.question, "");
 			return { content: [{ type: "text", text: answer ?? "(cancelled)" }] };
 		},
+		// The overlay already showed the question and answer — don't log it twice.
+		renderCall: blank,
+		renderResult: blank,
 	});
 }
