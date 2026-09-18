@@ -46,6 +46,7 @@ pi -e ./branch-workspace/index.ts
 
 ## Mode rules
 
+- Every session start / `/reload` resets `.mode` to `discuss` — `/mode implement` only lasts the current session
 - Missing `.mode` → defaults to `discuss`
 - Invalid value → resets to `discuss` with a warning
 - Only `/mode` can change `.mode` — direct file writes are blocked

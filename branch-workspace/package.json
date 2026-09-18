@@ -1,6 +1,6 @@
 {
   "name": "@po.dev/pi-branch-workspace",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Per-git-branch .pi workspace context for pi",
   "keywords": [
     "pi-package",

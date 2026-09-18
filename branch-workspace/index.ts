@@ -131,10 +131,12 @@ export default function (pi: ExtensionAPI) {
 	// Files written during the current agent turn, flushed to git on agent_settled.
 	let pendingFiles = new Set<string>();
 
-	// On session start / reload: validate .mode and warn if it was reset.
+	// On session start / reload: always drop back to discuss.
+	// /mode implement only lasts for the current session.
 	pi.on("session_start", (_event, ctx) => {
 		const s = ensure(ctx.cwd);
-		if (s.reset && ctx.hasUI) ctx.ui.notify("Invalid .mode reset to discuss", "warning");
+		if (s.mode !== "discuss") writeFileSync(join(s.dir, ".mode"), "discuss\n", "utf8");
+		if (ctx.hasUI && (s.reset || s.mode !== "discuss")) ctx.ui.notify("mode: discuss", "info");
 	});
 
 	// Inject branch workspace context (AGENTS.md + workspace.md) into every agent turn.
