@@ -16,11 +16,22 @@
  *                         herdr-agent-state.ts → pane.report_agent working/idle
  */
 export default function (pi: any) {
+  // UI overlay (ctx.ui.input / permission-system) → blocked
   pi.on("ui_prompt_start", async (_event: any) => {
     pi.events.emit("herdr:blocked", { active: true });
   });
 
   pi.on("ui_prompt_end", async (_event: any) => {
+    pi.events.emit("herdr:blocked", { active: false });
+  });
+
+  // Agent replied in plain text and is waiting for user → also blocked
+  pi.on("agent_settled", async (_event: any) => {
+    pi.events.emit("herdr:blocked", { active: true });
+  });
+
+  // User sent a message, agent starts working → unblock
+  pi.on("agent_start", async (_event: any) => {
     pi.events.emit("herdr:blocked", { active: false });
   });
 }
