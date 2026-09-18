@@ -1192,7 +1192,7 @@ function footerModelLabel(ctx: Pick<ExtensionCommandContext, "model" | "thinking
 	return model.reasoning && ctx.thinkingLevel ? `${label} • ${ctx.thinkingLevel}` : label;
 }
 
-function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thinkingLevel" | "getContextUsage">, totals: TotalStats): void {
+function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thinkingLevel" | "getContextUsage">, totals: TotalStats, sessionTotals: TotalStats | null): void {
 	ctx.ui.setFooter((_tui, theme) => ({
 		invalidate() {},
 		render(width: number): string[] {
@@ -1202,7 +1202,10 @@ function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thi
 			const contextStatus = context
 				? " · " + theme.fg("warning", `${context.percent?.toFixed(1) ?? "?"}%`) + theme.fg("dim", "/") + theme.fg("success", `${left} left`) + " " + theme.fg("accent", "(auto)")
 				: "";
-			const usage = theme.fg("thinkingHigh", "Usage:") + " " + theme.fg("accent", "(Today)") + " · " + theme.fg("accent", formatCost(totals.cost)) + " · " + theme.fg("text", `${formatTokens(totals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(totals.tokens.input + totals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(totals.tokens.output)}`) + " · " + theme.fg("thinkingHigh", `${formatTokens(totals.tokens.cacheRead + totals.tokens.cacheWrite)} cache`) + contextStatus;
+			const sessionPart = sessionTotals
+				? theme.fg("success", "(Session)") + " · " + theme.fg("accent", formatCost(sessionTotals.cost)) + " · " + theme.fg("text", `${formatTokens(sessionTotals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(sessionTotals.tokens.input + sessionTotals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(sessionTotals.tokens.output)}`) + "  "
+				: "";
+			const usage = theme.fg("thinkingHigh", "Usage:") + " " + sessionPart + theme.fg("accent", "(Today)") + " · " + theme.fg("accent", formatCost(totals.cost)) + " · " + theme.fg("text", `${formatTokens(totals.tokens.total)} tokens`) + " · " + theme.fg("success", `↑${formatTokens(totals.tokens.input + totals.tokens.cacheWrite)}`) + " · " + theme.fg("warning", `↓${formatTokens(totals.tokens.output)}`) + " · " + theme.fg("thinkingHigh", `${formatTokens(totals.tokens.cacheRead + totals.tokens.cacheWrite)} cache`) + contextStatus;
 			const model = theme.fg("accent", footerModelLabel(ctx));
 			const gap = width - visibleWidth(usage) - visibleWidth(model);
 			return [gap >= 2 ? usage + " ".repeat(gap) + model : truncateToWidth(usage, width)];
@@ -1211,6 +1214,8 @@ function setUsageFooter(ctx: Pick<ExtensionCommandContext, "ui" | "model" | "thi
 }
 
 export default function (pi: ExtensionAPI) {
+	let sessionTotals: TotalStats = { sessions: 0, messages: 0, cost: 0, tokens: { total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+
 	const refreshFooter = (ctx: Pick<ExtensionCommandContext, "hasUI" | "ui" | "model" | "thinkingLevel" | "getContextUsage">) => {
 		if (!ctx.hasUI) return;
 		void collectUsageData().then((data) => {
@@ -1221,14 +1226,31 @@ export default function (pi: ExtensionAPI) {
 				totals.messages += stats.messages; totals.cost += stats.cost;
 				totals.tokens.total += stats.tokens.total; totals.tokens.input += stats.tokens.input; totals.tokens.output += stats.tokens.output; totals.tokens.cacheRead += stats.tokens.cacheRead; totals.tokens.cacheWrite += stats.tokens.cacheWrite;
 			}
-			setUsageFooter(ctx, totals);
+			setUsageFooter(ctx, totals, sessionTotals);
 		});
 	};
 	const snapshotPrompt = (ctx: { sessionManager: { getSessionId(): string }; getSystemPrompt(): string }) => {
 		try { savePromptSnapshot(ctx.sessionManager.getSessionId(), ctx.getSystemPrompt()); } catch { /* usage must never block Pi */ }
 	};
-	pi.on("session_start", (_event, ctx) => { snapshotPrompt(ctx); refreshFooter(ctx); });
-	pi.on("message_end", (_event, ctx) => { snapshotPrompt(ctx); refreshFooter(ctx); });
+	pi.on("session_start", (_event, ctx) => {
+		sessionTotals = { sessions: 0, messages: 0, cost: 0, tokens: { total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+		snapshotPrompt(ctx);
+		refreshFooter(ctx);
+	});
+	pi.on("message_end", (event, ctx) => {
+		if (event.message.role === "assistant") {
+			const u = event.message.usage;
+			sessionTotals.messages++;
+			sessionTotals.cost += u.cost.total;
+			sessionTotals.tokens.total += u.totalTokens;
+			sessionTotals.tokens.input += u.input;
+			sessionTotals.tokens.output += u.output;
+			sessionTotals.tokens.cacheRead += u.cacheRead;
+			sessionTotals.tokens.cacheWrite += u.cacheWrite;
+		}
+		snapshotPrompt(ctx);
+		refreshFooter(ctx);
+	});
 	pi.on("model_select", (_event, ctx) => { refreshFooter(ctx); });
 	pi.registerCommand("usage", {
 		description: "Show usage statistics dashboard",
