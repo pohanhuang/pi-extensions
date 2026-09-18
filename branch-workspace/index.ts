@@ -112,7 +112,12 @@ function writesModeViaBash(command: string): boolean {
 }
 
 function mutatingBash(command: string): boolean {
-	return /(^|[;&|()\s])(rm|mv|cp|touch|mkdir|rmdir|ln|chmod|chown|python|python3|node|npm|pnpm|yarn|git\s+(commit|add|reset|checkout|switch|merge|rebase|clean|stash|push|pull|apply|am))\b|>>?|\btee\b/.test(command);
+	// `2>/dev/null` and friends discard output — not a mutation, so strip them
+	// before the redirect check. Interpreters (python/node) are read-only in
+	// practice here (JSON parsing in pipelines) and stay allowed.
+	// ponytail: heuristic, not a sandbox — the prompt guard is the real contract.
+	const c = command.replace(/\d?>>?\s*\/dev\/null/g, "");
+	return /(^|[;&|()\s])(rm|mv|cp|touch|mkdir|rmdir|ln|chmod|chown|npm|pnpm|yarn|git\s+(commit|add|reset|checkout|switch|merge|rebase|clean|stash|push|pull|apply|am))\b|>>?|\btee\b/.test(c);
 }
 
 function recordChange(changesFile: string, hash: string, files: string[]): void {
