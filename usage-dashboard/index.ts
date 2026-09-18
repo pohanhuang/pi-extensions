@@ -1322,6 +1322,18 @@ export default function (pi: ExtensionAPI) {
 	};
 	pi.on("session_start", (_event, ctx) => {
 		sessionTotals = { sessions: 0, messages: 0, cost: 0, tokens: { total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+		for (const entry of (ctx as any).sessionManager.getBranch()) {
+			if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+			const u = entry.message.usage;
+			if (!u) continue;
+			sessionTotals.messages++;
+			sessionTotals.cost += u.cost?.total ?? 0;
+			sessionTotals.tokens.total += u.totalTokens ?? 0;
+			sessionTotals.tokens.input += u.input ?? 0;
+			sessionTotals.tokens.output += u.output ?? 0;
+			sessionTotals.tokens.cacheRead += u.cacheRead ?? 0;
+			sessionTotals.tokens.cacheWrite += u.cacheWrite ?? 0;
+		}
 		snapshotPrompt(ctx);
 		refreshFooter(ctx);
 	});
