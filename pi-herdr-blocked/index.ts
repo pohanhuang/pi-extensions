@@ -27,11 +27,14 @@ export default function (pi: any) {
 
   // Agent replied in plain text and is waiting for user → also blocked
   pi.on("agent_settled", async (_event: any) => {
+    console.error("[pi-herdr-blocked] agent_settled fired");
     pi.events.emit("herdr:blocked", { active: true });
+    console.error("[pi-herdr-blocked] emitted herdr:blocked active=true");
   });
 
   // User sent a message, agent starts working → unblock
   pi.on("agent_start", async (_event: any) => {
+    console.error("[pi-herdr-blocked] agent_start fired");
     pi.events.emit("herdr:blocked", { active: false });
   });
 }
