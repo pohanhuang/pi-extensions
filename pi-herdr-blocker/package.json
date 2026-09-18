@@ -1,0 +1,26 @@
+{
+  "name": "@po.dev/pi-herdr-blocker",
+  "version": "0.1.0",
+  "description": "Report blocked state to herdr, plus an ask_me tool that blocks the turn",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "herdr",
+    "blocked",
+    "ask"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
