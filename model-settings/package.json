@@ -1,0 +1,25 @@
+{
+  "name": "@po.dev/pi-model-settings",
+  "version": "0.1.0",
+  "description": "View and configure default model, provider, and context window settings",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "model",
+    "settings"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
