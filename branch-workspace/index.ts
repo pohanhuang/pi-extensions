@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
 
-const MODES = ["discuss", "implement"] as const;
+const MODES = ["read-only", "edit"] as const;
 type Mode = (typeof MODES)[number];
 
 const WORKSPACE_TEMPLATE = `# Plan
@@ -50,7 +50,10 @@ function read(path: string): string {
 
 function normalizeMode(value: string): Mode {
 	const m = value.trim();
-	return (MODES as readonly string[]).includes(m) ? (m as Mode) : "discuss";
+	// Migrate legacy mode names
+	if (m === "discuss") return "read-only";
+	if (m === "implement") return "edit";
+	return (MODES as readonly string[]).includes(m) ? (m as Mode) : "read-only";
 }
 
 /** Parse H1 section names from workspace.md */
@@ -90,10 +93,10 @@ function ensure(cwd: string): { dir: string; wsFile: string; changesFile: string
 
 	const modePath = join(dir, ".mode");
 	let reset = false;
-	if (!existsSync(modePath)) writeFileSync(modePath, "discuss\n", "utf8");
+	if (!existsSync(modePath)) writeFileSync(modePath, "read-only\n", "utf8");
 	const raw = readFileSync(modePath, "utf8");
 	const mode = normalizeMode(raw);
-	if (mode !== raw.trim()) { writeFileSync(modePath, "discuss\n", "utf8"); reset = true; }
+	if (mode !== raw.trim()) { writeFileSync(modePath, "read-only\n", "utf8"); reset = true; }
 	return { dir, wsFile, changesFile, mode, reset };
 }
 
@@ -140,8 +143,8 @@ export default function (pi: ExtensionAPI) {
 	// /mode implement only lasts for the current session.
 	pi.on("session_start", (_event, ctx) => {
 		const s = ensure(ctx.cwd);
-		if (s.mode !== "discuss") writeFileSync(join(s.dir, ".mode"), "discuss\n", "utf8");
-		if (ctx.hasUI && (s.reset || s.mode !== "discuss")) ctx.ui.notify("mode: discuss", "info");
+		if (s.mode !== "read-only") writeFileSync(join(s.dir, ".mode"), "read-only\n", "utf8");
+		if (ctx.hasUI && (s.reset || s.mode !== "read-only")) ctx.ui.notify("mode: read-only", "info");
 	});
 
 	// Inject branch workspace context (AGENTS.md + workspace.md) into every agent turn.
@@ -149,8 +152,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("before_agent_start", (event, ctx) => {
 		const s = ensure(ctx.cwd);
 		const agentsMd = existsSync(join(ctx.cwd, "AGENTS.md")) ? join(ctx.cwd, "AGENTS.md") : join(ctx.cwd, ".pi", "agents.md");
-		const guard = s.mode === "discuss"
-			? `\n\nMODE GUARD: mode is discuss. Investigate before you answer: read the actual files, trace the real flow, verify your assumptions with read/grep, THEN respond. Never propose a change and discover the problem afterwards. If something is still ambiguous after reading, ask instead of guessing. No code changes, installs, commits, or mutations to project files. You MAY write to workspace.md (${s.wsFile}) to capture notes.`
+		const guard = s.mode === "read-only"
+			? `\n\nMODE GUARD: mode is read-only. Investigate before you answer: read the actual files, trace the real flow, verify your assumptions with read/grep, THEN respond. Never propose a change and discover the problem afterwards. If something is still ambiguous after reading, ask instead of guessing. No code changes, installs, commits, or mutations to project files. You MAY write to workspace.md (${s.wsFile}) to capture notes.`
 			: "";
 		return {
 			systemPrompt: `${event.systemPrompt}\n\n## Per-Branch Workspace\nBranch: ${branch(ctx.cwd)}\nWorkspace: ${s.dir}\nCurrent mode: ${s.mode}${guard}\n\n### ${agentsMd.endsWith("AGENTS.md") ? "AGENTS.md" : ".pi/agents.md"}\n${read(agentsMd)}\n\n### workspace.md\n${read(s.wsFile)}`,
@@ -169,15 +172,15 @@ export default function (pi: ExtensionAPI) {
 		if (event.toolName === "bash" && input.command && writesModeViaBash(input.command))
 			return { block: true, reason: "Use /mode discuss|implement to change .mode." };
 
-		if (s.mode !== "discuss") return;
+		if (s.mode !== "read-only") return;
 
-		// discuss mode: only workspace.md writes are allowed
+		// read-only mode: only workspace.md writes are allowed
 		if (event.toolName === "write" || event.toolName === "edit") {
 			if (isWorkspaceFile(ctx.cwd, input.path)) return;
-			return { block: true, terminate: true, reason: "Blocked: in discuss mode, file writes are limited to workspace.md." };
+			return { block: true, terminate: true, reason: "Blocked: in read-only mode, file writes are limited to workspace.md." };
 		}
 		if (event.toolName === "bash" && input.command && mutatingBash(input.command))
-			return { block: true, terminate: true, reason: "Blocked mutating bash: no implementation in discuss mode." };
+			return { block: true, terminate: true, reason: "Blocked mutating bash: read-only mode." };
 	});
 
 	// Collect files written/edited during the turn for auto-commit.
@@ -209,7 +212,7 @@ export default function (pi: ExtensionAPI) {
 	// =============================================================================
 
 	pi.registerCommand("mode", {
-		description: "Show or set workspace mode: discuss, implement",
+		description: "Show or set workspace mode: read-only, edit",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const s = ensure(ctx.cwd);
 			const next = args.trim().split(/\s+/)[0];
@@ -222,7 +225,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			if (!(MODES as readonly string[]).includes(next)) {
-				ctx.ui.notify("mode must be: discuss, implement", "error");
+				ctx.ui.notify("mode must be: read-only, edit", "error");
 				return;
 			}
 			writeFileSync(join(s.dir, ".mode"), `${next}\n`, "utf8");
